@@ -27,9 +27,12 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/juicedata/juicefs/pkg/object/odrvcookie"
 	"github.com/studio-b12/gowebdav"
 )
 
@@ -282,6 +285,27 @@ func newWebDAV(endpoint, user, passwd, token string) (ObjectStorage, error) {
 	}
 	uri.User = url.UserPassword(user, passwd)
 	c := gowebdav.NewClient(uri.String(), user, passwd)
+
+	if isSharepoint, _ := regexp.MatchString(`^.*sharepoint\.(?:com|cn|us|de)$`, uri.Host); isSharepoint {
+		cookieAuth := odrvcookie.New(user, passwd, endpoint)
+
+		setSharepointInterceptor := func() {
+			cookie, err := cookieAuth.CookieString()
+			if err != nil {
+				logger.Warnf("could not renew sharepoint cookies %s: %s", endpoint, err)
+				return
+			}
+			c.SetInterceptor(func(method string, rq *http.Request) {
+				rq.URL.User = nil
+				rq.Header.Del("Authorization")
+				rq.Header.Set("Cookie", cookie)
+			})
+			logger.Debug("successfully renewed sharepoint cookies")
+		}
+
+		setSharepointInterceptor()
+		odrvcookie.NewRenew(12*time.Hour, setSharepointInterceptor)
+	}
 
 	return &webdav{endpoint: uri, c: c}, nil
 }
